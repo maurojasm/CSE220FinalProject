@@ -1,0 +1,303 @@
+/* Copyright 2020 HPS/SAFARI Research Groups
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+/***************************************************************************************
+ * File         : bp/bp.h
+ * Author       : HPS Research Group
+ * Date         : 12/9/1998
+ * Description  :
+ ***************************************************************************************/
+
+#ifndef __BP_H__
+#define __BP_H__
+
+#include "globals/global_types.h"
+
+#include "bp/bp.param.h"
+
+#include "libs/cache_lib.h"
+#include "libs/hash_lib.h"
+
+#include "op.h"
+
+/**************************************************************************************/
+// Branch prediction recovery information
+
+typedef struct Bp_Recovery_Info_struct {
+  uns proc_id;
+  Counter recovery_cycle;         /* cycle that begins misprediction recovery */
+  Addr recovery_fetch_addr;       /* address to redirect the istream */
+  Counter recovery_op_num;        /* op_num of op that caused recovery */
+  Counter recovery_cf_type;       /* cf_type of op that caused recovery */
+  Recovery_Info recovery_info;    /* information about the op causing the recovery */
+  Inst_Info* recovery_inst_info;  // pointer to inst causing recovery
+  Flag recovery_force_offpath;
+
+  Counter redirect_cycle;  /* cycle that begins a redirection (eg. btb miss) */
+  Counter redirect_op_num; /* op_num of op that caused redirect */
+  Op* redirect_op;         /* pointer to op that caused redirect */
+
+  Op* recovery_op;             /* pointer to op that caused recovery */
+  Counter recovery_unique_num; /* unique_num of op that caused recovery */
+  uns64 recovery_inst_uid;     /* unique id of the instruction that caused  */
+
+  Flag wpe_flag;     /* This CFI has a WPE associated with it */
+  Counter wpe_cycle; /* The cycle in which the WPE occurred */
+
+} Bp_Recovery_Info;
+
+/**************************************************************************************/
+/* Conditional_Branch_Info  */
+
+typedef struct Ra_Conditional_Branch_Info_struct {
+  Addr pred_addr;
+  uns32 old_history;
+  uns32 new_history;
+  Counter op_num;
+  Counter unique_num;
+  Op* op;
+  uns8 dir;
+  Flag off_path;
+  Flag init_mispred;
+  Flag resolved;
+  int updates_made;  // how many updates did this branch make
+  Flag futgshare_changed;
+} Ra_Conditional_Branch_Info;
+
+/**************************************************************************************/
+// Branch prediction state
+
+typedef struct Crs_Entry_struct {
+  Addr addr;
+  Counter op_num;
+  uns nos;  // next on stack
+} Crs_Entry;
+
+typedef struct Loop_Entry_struct {
+  uns8 dir;      // direction branch takes on loop exit
+  uns count;     // consecutive times the non-exit outcome has been seen
+  uns last_max;  // period of the last completed loop pattern
+  uns repeats;   // number of times in a row the pattern has repeated
+} Loop_Entry;
+
+/* branch predictor/btb instruction level stats */
+typedef struct Br_Inst_Stats_struct {
+  Addr pathhist;
+  Addr addr;
+  Addr target_addr;
+  uns32 dyn_cnt;
+  uns32 taken_cnt;
+  uns32 misspred_cnt;
+  uns32 interf_misspred_cnt;
+  uns32 prev_dir;
+  Addr prev_target;
+  uns32 trans_cnt;
+  uns32 num_path;
+  uns32 num_chain;
+  struct Br_Inst_Stats_struct* path;
+  struct Br_Inst_Stats_struct* chain;
+} Br_Inst_Stats;
+
+struct Bp_struct;
+struct Bp_Btb_struct;
+struct Bp_Ibtb_struct;  // added _struct, compiler randomly started complaining
+struct Br_Conf_struct;
+
+typedef struct Perceptron_struct {
+  int32* weights;
+} Perceptron;
+
+typedef struct CRS_struct {
+  Crs_Entry* entries;
+  Flag* off_path;
+  uns depth;
+  uns head;
+  uns tail;
+  uns tail_save;
+  uns depth_save;
+  // for realistic crs
+  uns tos;   // top of stack
+  uns next;  // next return address will be written here
+} CRS;
+
+typedef struct Bp_Data_struct {
+  uns proc_id;
+  uns bp_id;
+  /* predictor data */
+  struct Bp_struct* bp;  // main branch predictor.
+  struct Bp_struct* bp_l0;  // l0 branch predictor.
+  struct Bp_Btb_struct* bp_btb;
+  struct Bp_Ibtb_struct* bp_ibtb;
+  struct Br_Conf_struct* br_conf;
+
+  uns32 global_hist;
+  Cache* btb;     // BTB is shared over all the BPs (only allocated on the primary BP)
+  Cache* btb_l0;  // L0 BTB cache (only allocated on primary BP)
+  Cache* btb_l1;  // L1 BTB cache (only allocated on primary BP)
+
+  CRS crs;
+
+  Cache* tc_tagged;  // tc_tagged is shared over all the BPs
+  Addr* tc_tagless;  // tc_tagged is shared over all the BPs
+  uns8* tc_selector;
+  uns32 targ_hist;
+  uns32 targ_index;
+  uns8 target_bit_length;
+
+  Flag on_path_pred;
+} Bp_Data;
+
+/**************************************************************************************/
+/* Branch Predictor Interfaces */
+
+/* IMPORTANT: please make sure that this enum matches EXACTLY the names and
+ * order in bp/bp_table.def !!!!!!! */
+typedef enum Bp_Id_enum {
+  GSHARE_BP,
+  BIMODAL_BP,
+  HYBRIDGP_BP,
+  TAGESCL_BP,
+  TAGESCL80_BP,
+  PERCEPTRON_BP,
+#define DEF_CBP(CBP_NAME, CBP_CLASS) CBP_CLASS##_BP,
+#include "cbp_table.def"
+#undef DEF_CBP
+  NUM_BP,
+} Bp_Id;
+
+typedef enum Btb_Id_enum {
+  GENERIC_BTB,
+  BLOCK_BTB,
+  NUM_BTB,
+} Btb_Id;
+
+typedef enum Ibtb_Id_enum {
+  TC_TAGLESS_IBTB,
+  TC_TAGGED_IBTB,
+  TC_HYBRID_IBTB,
+  NUM_IBTB,
+} Ibtb_Id;
+
+typedef enum Br_Conf_Id_eunm {
+  ONPATH_CONF,
+  PERCEPTRON_CONF,
+  NUM_BR_CONF,
+} Br_Conf_Id;
+
+typedef struct Bp_struct {
+  Bp_Id id;
+  const char* name;
+  void (*init_func)(void);              /* called to initialize the predictor */
+  void (*timestamp_func)(Op*);          /* called to timestamp a branch for prediction, update, and recovery */
+  uns8 (*pred_func)(Op*, Bp_Pred_Level); /* called to predict a branch instruction */
+  void (*spec_update_func)(
+      Op*, Bp_Pred_Level); /* called to update the speculative state of the predictor in the front-end */
+  void (*update_func)(Op*, Bp_Pred_Level); /* called to update the bp when a branch is resolved
+                                            * (at the end of execute or retire) */
+  void (*retire_func)(Op*);             /* called to retire a branch and update the state of the bp that has to be
+                                         * updated after retirement*/
+  void (*recover_func)(Recovery_Info*); /* called to recover the bp when a misprediction is realized */
+  uns8 (*full_func)(Bp_Data*);
+} Bp;
+
+typedef struct Bp_Btb_struct {
+  Btb_Id id;
+  const char* name;
+  void (*init_func)(Bp_Data*, Bp_Data*);          /* called to initialize the branch target buffer (shares primary) */
+  void (*pred_func)(Bp_Data*, Op*);               /* called to predict the branch target */
+  void (*update_func)(Bp_Data*, Op*);             /* */
+  void (*recover_func)(Bp_Data*, Recovery_Info*); /* */
+} Bp_Btb;
+
+typedef struct Bp_Ibtb_struct {
+  Ibtb_Id id;
+  const char* name;
+  void (*init_func)(Bp_Data*, Bp_Data*); /* called to initialize the indirect target predictor (shares primary) */
+  Addr (*pred_func)(Bp_Data*, Op*);      /* called to predict an indirect branch target */
+  void (*update_func)(Bp_Data*, Op*);    /* called to update the indirect branch target when a branch is resolved */
+  void (*recover_func)(Bp_Data*, Recovery_Info*); /* called to recover the indirect branch target when
+                                                   * a misprediction is realized */
+} Bp_Ibtb;
+
+typedef struct Br_Conf_struct {
+  Br_Conf_Id id;
+  const char* name;
+  void (*init_func)(void);    /* called to initialize the confidence estimator */
+  void (*pred_func)(Op*, Bp_Pred_Level); /* called to predict confidence */
+  void (*update_func)(Op*);   /* called to update the confidence estimator when a
+                                 branch is resolved */
+  void (*recover_func)(void); /* called to recover the confidence estimator
+                                 when a misprediction is realized */
+} Br_Conf;
+
+/**************************************************************************************/
+/* External variables */
+
+extern Bp bp_table[];
+extern Bp_Btb bp_btb_table[];
+extern Bp_Ibtb bp_ibtb_table[];
+extern Bp_Data* g_bp_data;
+extern Bp_Recovery_Info* bp_recovery_info;
+extern Br_Conf br_conf_table[];
+
+/**************************************************************************************/
+/* Inline helpers */
+
+// Returns TRUE if the L0 (early) branch predictor is enabled.
+// L0 runs in parallel with the main BP at a shorter latency.
+static inline Flag bp_l0_enabled(void) {
+  return (BP_MECH_L0 != NUM_BP) && (BP_L0_LATENCY > 0);
+}
+
+// Returns a pointer to the BTB target that bp_main should use, based on which
+// BTB levels are available within BP_MAIN_LATENCY.  Prefers the largest (main)
+// BTB when it fits; falls back to L1 then L0.  Returns NULL if none fits.
+static inline Addr* bp_btb_for_main(Btb_Pred_Info* bpi) {
+  if (BTB_MAIN_LATENCY <= BP_MAIN_LATENCY && bpi->btb_main_hit)
+    return &bpi->btb_main_target;
+  if (BTB_L1_PRESENT && BTB_L1_LATENCY <= BP_MAIN_LATENCY && bpi->btb_l1_hit)
+    return &bpi->btb_l1_target;
+  if (BTB_L0_PRESENT && BTB_L0_LATENCY <= BP_MAIN_LATENCY && bpi->btb_l0_hit)
+    return &bpi->btb_l0_target;
+  return NULL;
+}
+
+/**************************************************************************************/
+/* Prototypes */
+void set_bp_data(Bp_Data* new_bp_data);
+void set_bp_recovery_info(Bp_Recovery_Info* new_bp_recovery_info);
+
+void init_bp_recovery_info(uns8, Bp_Recovery_Info*);
+void bp_sched_recovery(Bp_Recovery_Info* bp_recovery_info, Op* op, Counter cycle);
+void bp_sched_redirect(Bp_Recovery_Info*, Op*, Counter);
+
+void init_bp_data(uns8, uns8, Bp_Data*, Bp_Data*);
+Flag bp_is_predictable(Bp_Data*);
+Addr bp_predict_op(Bp_Data*, Op*, uns, uns, Addr, Bp_Pred_Level);
+void bp_target_known_op(Bp_Data*, Op*);
+void bp_resolve_op(Bp_Data*, Op*);
+void bp_retire_op(Bp_Data*, Op*);
+void bp_recover_op(Bp_Data*, Cf_Type, Recovery_Info*);
+void bp_sync(Bp_Data*, Bp_Data*);
+
+/**************************************************************************************/
+
+#endif /* #ifndef __BP_H__ */
