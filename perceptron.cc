@@ -28,7 +28,7 @@ inline int get_theta() {
 }
 
 inline uns32 branch_to_index(const Addr addr) {
-  return addr % PERCEPTRON_ENTRIES;
+  return addr % TOTAL_PERCEPTRONS;
 }
 
 inline int weighted_sum(const std::vector<int>& w, const std::vector<int>& hist) {
@@ -54,7 +54,7 @@ inline int bound(int w) {
 void train_perceptron(std::vector<int>& weight, const std::vector<int>& prevResults, int t) {
   weight[0] = bound(weight[0] + t);
 
-  for (int i = 0; i < PREV_RESULTS_LEN; i++) {
+  for (uns i = 0; i < PREV_RESULTS_LEN; i++) {
     weight[i + 1] = bound(weight[i + 1] + t * prevResults[i]);
   }
 }
@@ -64,18 +64,18 @@ void train_perceptron(std::vector<int>& weight, const std::vector<int>& prevResu
 void bp_init_perceptron() {
   core_states.resize(NUM_CORES);
 
-  for (int i = 0; i < NUM_CORES; i++) {
+  for (uns i = 0; i < NUM_CORES; i++) {
     Perceptron_State& state = core_states[i];
 
     // creates 512 perceptrons
-    state.weights.resize(PERCEPTRON_ENTRIES);
-    for (int j = 0; j < PERCEPTRON_ENTRIES; j++) {
+    state.weights.resize(TOTAL_PERCEPTRONS);
+    for (uns j = 0; j < TOTAL_PERCEPTRONS; j++) {
       state.weights[j].resize(PREV_RESULTS_LEN + 1, 0);
     }
 
     // Creates 24 slots for global history
     state.prevResults.resize(PREV_RESULTS_LEN);
-    for (int j = 0; j < PREV_RESULTS_LEN; j++) {
+    for (uns j = 0; j < PREV_RESULTS_LEN; j++) {
       state.prevResults[j] = -1;
     }
   }
